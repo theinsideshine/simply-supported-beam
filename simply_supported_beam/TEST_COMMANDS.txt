@@ -1,0 +1,33 @@
+simply_supported_beam 0.01 - comandos JSON
+==========================================
+
+Runtime:
+{"cmd":"jog_home"}
+{"cmd":"stop"}
+{"cmd":"jog_away"}
+{"cmd":"stop"}
+{"cmd":"enable"}
+{"cmd":"disable"}
+{"cmd":"home"}
+
+Info:
+{"info":"version"}
+{"info":"all_params"}
+
+Parametros persistentes:
+{"step_period_us":5000}
+{"home_slow_period_us":10000}
+{"home_backoff_steps":20}
+{"home_debounce_ms":15}
+
+Factory reset:
+{"cmd":"factory_reset"}
+
+Notas:
+- DIR_HOME = HIGH
+- DIR_AWAY = LOW
+- FC_HOME LOW = LIBRE, HIGH = ACTIVADO
+- STOP durante HOME aborta inmediatamente la secuencia
+- DISABLE durante HOME tambien aborta y deshabilita A4988, como X en 0.04
+- Los delayMicroseconds() cortos del driver se mantienen intencionalmente
+  en esta etapa: 10 us despues de DIR y 4 us para STEP HIGH.
