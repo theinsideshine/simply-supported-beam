@@ -1,14 +1,12 @@
-simply_supported_beam 0.01 - comandos JSON
+simply_supported_beam 0.04 - comandos JSON
 ==========================================
 
 Runtime:
-{"cmd":"jog_home"}
-{"cmd":"stop"}
-{"cmd":"jog_away"}
+{"cmd":"home"}
+{"cmd":"move_abs_steps","steps":100}
 {"cmd":"stop"}
 {"cmd":"enable"}
 {"cmd":"disable"}
-{"cmd":"home"}
 
 Info:
 {"info":"version"}
@@ -19,15 +17,60 @@ Parametros persistentes:
 {"home_slow_period_us":10000}
 {"home_backoff_steps":20}
 {"home_debounce_ms":15}
+{"home_seek_max_steps":2500}
+{"move_fast_period_us":5000}
+{"max_position_steps":450}
 
 Factory reset:
 {"cmd":"factory_reset"}
 
 Notas:
-- DIR_HOME = HIGH
-- DIR_AWAY = LOW
-- FC_HOME LOW = LIBRE, HIGH = ACTIVADO
-- STOP durante HOME aborta inmediatamente la secuencia
-- DISABLE durante HOME tambien aborta y deshabilita A4988, como X en 0.04
-- Los delayMicroseconds() cortos del driver se mantienen intencionalmente
-  en esta etapa: 10 us despues de DIR y 4 us para STEP HIGH.
+- DIR_HOME = LOW
+- DIR_AWAY = HIGH
+- HOME = subir
+- AWAY = bajar / alejarse de HOME
+
+- FC_HOME LOW = LIBRE
+- FC_HOME HIGH = ACTIVADO
+
+- Ya NO existen:
+  {"cmd":"jog_home"}
+  {"cmd":"jog_away"}
+
+- Todo movimiento de ensayo es absoluto respecto de HOME:
+  {"cmd":"move_abs_steps","steps":N}
+
+- HOME establece:
+  position_steps = 0
+
+- No se permite mover sin haber realizado HOME.
+
+- No se permiten posiciones negativas.
+
+- Rango permitido:
+  0 <= steps <= max_position_steps
+
+- Despues de reset del ESP32 se pierde la referencia logica
+  y hay que realizar HOME nuevamente.
+
+- STOP durante HOME aborta inmediatamente.
+
+- STOP durante MOVE aborta y conserva la posicion alcanzada.
+
+- DISABLE invalida la referencia de posicion porque el mecanismo
+  podria desplazarse con el driver deshabilitado.
+
+- home_seek_max_steps esta almacenado en NVS.
+
+- max_position_steps esta almacenado en NVS.
+
+- move_fast_period_us esta almacenado en NVS.
+
+- Relacion mecanica provisional validada:
+  200 pasos = 1 vuelta ~= 8 mm
+  25 pasos ~= 1 mm
+
+- Los delayMicroseconds() cortos del driver se mantienen
+  intencionalmente:
+    10 us despues de DIR
+    4 us para STEP HIGH
