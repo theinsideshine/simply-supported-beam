@@ -14,8 +14,9 @@
     - configuracion persistente NVS / Preferences
     - copia RAM de parametros
     - entrada host JSON por Serial
-    - respuestas host JSON por Serial
     - pedidos runtime pendientes para que el .ino / FSM decida
+
+  La salida JSON pertenece a CBeamMessaging.
 
   Regla:
     - NO mueve motor
@@ -154,85 +155,6 @@ public:
   double get_requested_force_g() const;
   void clear_request();
 
-  // ----------------------------------------------------------
-  // Respuestas/eventos JSON
-  // ----------------------------------------------------------
-  void send_command_result(const char* cmd,
-                           const char* result,
-                           const char* reason = nullptr);
-
-  void send_event(const char* event,
-                  const char* state = nullptr,
-                  const char* detail = nullptr);
-
-  void send_event_value(const char* event,
-                        const char* state,
-                        const char* key,
-                        uint32_t value);
-
-  void send_loads(const char* source,
-                  double r1_g,
-                  double r2_g,
-                  double sum_g,
-                  double r1_n,
-                  double r2_n,
-                  double sum_n);
-
-  void send_motor_calibration_cycle(uint8_t cycle,
-                                    double baselineG,
-                                    uint32_t contactStep,
-                                    uint32_t step500G,
-                                    double force500G,
-                                    uint32_t step1000G,
-                                    double force1000G,
-                                    uint32_t step1500G,
-                                    double force1500G);
-
-  void send_motor_calibration_plan(double gapMm,
-                                   uint32_t estimatedContactSteps,
-                                   uint32_t approachTargetSteps,
-                                   double maxForceG);
-
-  void send_motor_calibration_progress(const char* state,
-                                       uint8_t cycle,
-                                       uint32_t referenceContactStep,
-                                       uint32_t approachTargetStep,
-                                       uint32_t positionSteps,
-                                       double forceG,
-                                       double targetForceG);
-
-  void send_force_control_event(const char* state,
-                                double targetForceG,
-                                double baselineG,
-                                uint32_t estimatedStep,
-                                uint32_t positionSteps,
-                                double forceG);
-
-  void send_force_control_error(const char* reason,
-                                double targetForceG,
-                                double baselineG,
-                                uint32_t positionSteps,
-                                double forceG,
-                                double maxForceG);
-
-  void send_motor_calibration_error(const char* detail,
-                                    const char* phase,
-                                    uint32_t positionSteps,
-                                    double forceG,
-                                    double targetForceG,
-                                    double maxForceG);
-
-  void send_motor_calibration_summary(const char* state,
-                                      double maxForceG,
-                                      uint32_t contactOffsetSteps,
-                                      uint32_t contactRangeSteps,
-                                      uint32_t step500G,
-                                      uint32_t range500Steps,
-                                      uint32_t step1000G,
-                                      uint32_t range1000Steps,
-                                      uint32_t step1500G,
-                                      uint32_t range1500Steps);
-
   void factory_reset();
 
 private:
@@ -294,13 +216,6 @@ private:
   void set_pending_cell_calibration(uint8_t cell);
   void set_pending_apply_force(double forceG);
 
-  void send_all_params();
-  void send_version();
-  void send_ack(JsonDocument& doc);
-  void send_ok(JsonDocument& doc);
-  void send_error(const char* reason);
-  void send_json(JsonDocument& doc);
-  void send_json_pretty(JsonDocument& doc);
 
   bool valid_period_us(uint32_t value) const;
   bool valid_backoff_steps(uint32_t value) const;

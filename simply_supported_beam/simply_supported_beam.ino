@@ -2,7 +2,7 @@
   Viga simplemente apoyada
   ESP32-S3 + NEMA17 + A4988 + FC_HOME + 2 x HX711
 
-  Firmware modular 0.09.
+  Firmware modular 0.10.
 
   Objetivo de esta version:
     - mantener HOME y movimiento absoluto validados de 0.04
@@ -16,6 +16,7 @@
     - agregar calibracion motor-viga con busqueda de contacto y repetibilidad
     - guardar offset de contacto y posiciones aproximadas 500/1000/1500 g
     - corregir apply_force: aproximacion basada en contacto real calibrado
+    - separar salida JSON en CBeamMessaging sin cambiar el protocolo
 
   Modos:
     - MODE_MANUAL:
@@ -27,7 +28,8 @@
 
   Regla de arquitectura:
     - .ino crea objetos y coordina modos / FSM
-    - CBeamConfig concentra JSON + NVS + copia RAM
+    - CBeamConfig concentra entrada JSON + NVS + copia RAM
+    - CBeamMessaging concentra la salida JSON del protocolo
     - CLoadCell concentra HX711 + matematica + calibracion
     - CLoadCell NO accede a NVS
 */
@@ -37,6 +39,7 @@
 
 #include "beam_system.h"
 #include "beam_config.h"
+#include "beam_messaging.h"
 #include "a4988_stepper.h"
 #include "home_switch.h"
 #include "load_cell.h"
@@ -122,7 +125,7 @@ void homeSetState(uint8_t newState)
 bool startMotor(uint8_t directionLevel, uint32_t periodUs)
 {
   if (!Motor.start(directionLevel, periodUs)) {
-    Config.send_event("motor", "error", "invalid_step_period");
+    Messaging.send_event("motor", "error", "invalid_step_period");
     return false;
   }
 
@@ -134,7 +137,7 @@ void invalidatePosition(const char* reason)
   homed = false;
 
   if (reason != nullptr && reason[0] != '\0') {
-    Config.send_event("position", "invalid", reason);
+    Messaging.send_event("position", "invalid", reason);
   }
 }
 
@@ -173,7 +176,7 @@ bool sendCurrentLoads(const char* source)
   double r2_n = (r2_g / 1000.0) * LOAD_CELL_GRAVITY;
   double sum_n = r1_n + r2_n;
 
-  Config.send_loads(
+  Messaging.send_loads(
     source,
     r1_g,
     r2_g,
@@ -365,7 +368,7 @@ bool checkMotorCalibrationForce(double baselineG,
   double sumG = 0.0;
 
   if (!readLoadsAverageBlocking(r1G, r2G, sumG)) {
-    Config.send_motor_calibration_error(
+    Messaging.send_motor_calibration_error(
       "load_read_failed",
       phase,
       (uint32_t)currentPositionSteps,
@@ -380,8 +383,8 @@ bool checkMotorCalibrationForce(double baselineG,
 
   if (appliedForceG >= maxForceG) {
     Motor.stop();
-    Config.send_event("safety", "stop", "max_force_reached");
-    Config.send_motor_calibration_error(
+    Messaging.send_event("safety", "stop", "max_force_reached");
+    Messaging.send_motor_calibration_error(
       "max_force_reached",
       phase,
       (uint32_t)currentPositionSteps,
@@ -420,7 +423,7 @@ bool approachToStepCalibration(uint32_t targetStep,
         0.0,
         appliedForceG
       );
-      Config.send_motor_calibration_error(
+      Messaging.send_motor_calibration_error(
         "max_position_reached",
         phase,
         (uint32_t)currentPositionSteps,
@@ -468,7 +471,7 @@ bool findContactFineCalibration(double baselineG,
         0.0,
         appliedForceG
       );
-      Config.send_motor_calibration_error(
+      Messaging.send_motor_calibration_error(
         "max_position_reached",
         phase,
         (uint32_t)currentPositionSteps,
@@ -506,7 +509,7 @@ bool seekForceTargetCalibration(const char* phase,
                                 uint32_t& reachedStep,
                                 double& reachedForceG)
 {
-  Config.send_motor_calibration_progress(
+  Messaging.send_motor_calibration_progress(
     "target_search",
     cycle,
     0UL,
@@ -532,7 +535,7 @@ bool seekForceTargetCalibration(const char* phase,
       reachedStep = (uint32_t)currentPositionSteps;
       reachedForceG = appliedForceG;
 
-      Config.send_motor_calibration_progress(
+      Messaging.send_motor_calibration_progress(
         "target_reached",
         cycle,
         0UL,
@@ -559,7 +562,7 @@ bool seekForceTargetCalibration(const char* phase,
     uint32_t nextTarget = (uint32_t)currentPositionSteps + chunk;
 
     if (maxPosition == 0UL || nextTarget > maxPosition) {
-      Config.send_motor_calibration_error(
+      Messaging.send_motor_calibration_error(
         "max_position_reached",
         phase,
         (uint32_t)currentPositionSteps,
@@ -571,7 +574,7 @@ bool seekForceTargetCalibration(const char* phase,
     }
 
     if (!moveAwayCalibrationBlocking(chunk)) {
-      Config.send_motor_calibration_error(
+      Messaging.send_motor_calibration_error(
         "max_position_reached",
         phase,
         (uint32_t)currentPositionSteps,
@@ -642,7 +645,7 @@ bool readAppliedForceBlocking(double baselineG,
   double sumG = 0.0;
 
   if (!readLoadsAverageBlocking(r1G, r2G, sumG)) {
-    Config.send_force_control_error(
+    Messaging.send_force_control_error(
       "load_read_failed",
       targetForceG,
       baselineG,
@@ -657,8 +660,8 @@ bool readAppliedForceBlocking(double baselineG,
 
   if (appliedForceG >= maxForceG) {
     Motor.stop();
-    Config.send_event("safety", "stop", "max_force_reached");
-    Config.send_force_control_error(
+    Messaging.send_event("safety", "stop", "max_force_reached");
+    Messaging.send_force_control_error(
       "max_force_reached",
       targetForceG,
       baselineG,
@@ -683,7 +686,7 @@ bool runApplyForce(double targetForceG)
   double baselineG = 0.0;
 
   if (!readLoadsAverageBlocking(r1G, r2G, baselineG)) {
-    Config.send_force_control_error(
+    Messaging.send_force_control_error(
       "baseline_failed",
       targetForceG,
       0.0,
@@ -703,7 +706,7 @@ bool runApplyForce(double targetForceG)
   uint32_t referenceContactStep = Config.get_motor_contact_offset_steps();
 
   if (referenceContactStep == 0UL) {
-    Config.send_force_control_error(
+    Messaging.send_force_control_error(
       "invalid_contact_offset",
       targetForceG,
       baselineG,
@@ -719,7 +722,7 @@ bool runApplyForce(double targetForceG)
       ? referenceContactStep - MOTOR_APPLY_PRECONTACT_MARGIN_STEPS
       : 0UL;
 
-  Config.send_force_control_event(
+  Messaging.send_force_control_event(
     "start",
     targetForceG,
     baselineG,
@@ -728,7 +731,7 @@ bool runApplyForce(double targetForceG)
     0.0
   );
 
-  Config.send_force_control_event(
+  Messaging.send_force_control_event(
     "fast_approach",
     targetForceG,
     baselineG,
@@ -754,7 +757,7 @@ bool runApplyForce(double targetForceG)
     uint32_t nextTarget = (uint32_t)currentPositionSteps + chunk;
 
     if (maxPosition == 0UL || nextTarget > maxPosition) {
-      Config.send_force_control_error(
+      Messaging.send_force_control_error(
         "max_position_reached",
         targetForceG,
         baselineG,
@@ -766,7 +769,7 @@ bool runApplyForce(double targetForceG)
     }
 
     if (!moveAwayCalibrationBlocking(chunk)) {
-      Config.send_force_control_error(
+      Messaging.send_force_control_error(
         "max_position_reached",
         targetForceG,
         baselineG,
@@ -788,7 +791,7 @@ bool runApplyForce(double targetForceG)
     }
 
     if (appliedForceG >= targetForceG) {
-      Config.send_force_control_event(
+      Messaging.send_force_control_event(
         "target_reached",
         targetForceG,
         baselineG,
@@ -804,7 +807,7 @@ bool runApplyForce(double targetForceG)
     if (appliedForceG >= MOTOR_CAL_CONTACT_THRESHOLD_G) {
       contactDetected = true;
 
-      Config.send_force_control_event(
+      Messaging.send_force_control_event(
         "contact_detected",
         targetForceG,
         baselineG,
@@ -828,7 +831,7 @@ bool runApplyForce(double targetForceG)
     }
 
     if (appliedForceG >= targetForceG) {
-      Config.send_force_control_event(
+      Messaging.send_force_control_event(
         "target_reached",
         targetForceG,
         baselineG,
@@ -842,7 +845,7 @@ bool runApplyForce(double targetForceG)
     if (appliedForceG >= MOTOR_CAL_CONTACT_THRESHOLD_G) {
       contactDetected = true;
 
-      Config.send_force_control_event(
+      Messaging.send_force_control_event(
         "contact_detected",
         targetForceG,
         baselineG,
@@ -858,7 +861,7 @@ bool runApplyForce(double targetForceG)
   //    hasta detectar contacto REAL por fuerza.
   // ----------------------------------------------------------
   if (!contactDetected) {
-    Config.send_force_control_event(
+    Messaging.send_force_control_event(
       "fine_contact_search",
       targetForceG,
       baselineG,
@@ -872,7 +875,7 @@ bool runApplyForce(double targetForceG)
       uint32_t nextTarget = (uint32_t)currentPositionSteps + 1UL;
 
       if (maxPosition == 0UL || nextTarget > maxPosition) {
-        Config.send_force_control_error(
+        Messaging.send_force_control_error(
           "max_position_reached",
           targetForceG,
           baselineG,
@@ -884,7 +887,7 @@ bool runApplyForce(double targetForceG)
       }
 
       if (!moveAwayCalibrationBlocking(1UL)) {
-        Config.send_force_control_error(
+        Messaging.send_force_control_error(
           "max_position_reached",
           targetForceG,
           baselineG,
@@ -906,7 +909,7 @@ bool runApplyForce(double targetForceG)
       }
 
       if (appliedForceG >= targetForceG) {
-        Config.send_force_control_event(
+        Messaging.send_force_control_event(
           "target_reached",
           targetForceG,
           baselineG,
@@ -920,7 +923,7 @@ bool runApplyForce(double targetForceG)
       if (appliedForceG >= MOTOR_CAL_CONTACT_THRESHOLD_G) {
         contactDetected = true;
 
-        Config.send_force_control_event(
+        Messaging.send_force_control_event(
           "contact_detected",
           targetForceG,
           baselineG,
@@ -936,7 +939,7 @@ bool runApplyForce(double targetForceG)
   // 3) Contacto confirmado. Desde aca manda exclusivamente la
   //    fuerza medida. Se usan pasos adaptativos segun cercania.
   // ----------------------------------------------------------
-  Config.send_force_control_event(
+  Messaging.send_force_control_event(
     "target_search",
     targetForceG,
     baselineG,
@@ -955,7 +958,7 @@ bool runApplyForce(double targetForceG)
     }
 
     if (appliedForceG >= targetForceG) {
-      Config.send_force_control_event(
+      Messaging.send_force_control_event(
         "target_reached",
         targetForceG,
         baselineG,
@@ -980,7 +983,7 @@ bool runApplyForce(double targetForceG)
     uint32_t nextTarget = (uint32_t)currentPositionSteps + chunk;
 
     if (maxPosition == 0UL || nextTarget > maxPosition) {
-      Config.send_force_control_error(
+      Messaging.send_force_control_error(
         "max_position_reached",
         targetForceG,
         baselineG,
@@ -992,7 +995,7 @@ bool runApplyForce(double targetForceG)
     }
 
     if (!moveAwayCalibrationBlocking(chunk)) {
-      Config.send_force_control_error(
+      Messaging.send_force_control_error(
         "max_position_reached",
         targetForceG,
         baselineG,
@@ -1039,12 +1042,12 @@ uint32_t rangeSteps(const uint32_t values[], uint8_t count)
 bool runMotorCalibration()
 {
   if (!LoadCell1.isCalibrated() || !LoadCell2.isCalibrated()) {
-    Config.send_event("motor_calibration", "error", "load_cells_not_calibrated");
+    Messaging.send_event("motor_calibration", "error", "load_cells_not_calibrated");
     return false;
   }
 
   if (Config.get_max_position_steps() == 0UL) {
-    Config.send_event("motor_calibration", "error", "max_position_not_configured");
+    Messaging.send_event("motor_calibration", "error", "max_position_not_configured");
     return false;
   }
 
@@ -1092,10 +1095,10 @@ bool runMotorCalibration()
   // ----------------------------------------------------------
   // Busqueda preliminar: usa el gap ingresado solo para acercarse.
   // ----------------------------------------------------------
-  Config.send_event("motor_calibration", "start", "rough_contact_search");
+  Messaging.send_event("motor_calibration", "start", "rough_contact_search");
 
   if (!runHomeBlocking()) {
-    Config.send_event("motor_calibration", "error", "home_failed");
+    Messaging.send_event("motor_calibration", "error", "home_failed");
     return false;
   }
 
@@ -1106,7 +1109,7 @@ bool runMotorCalibration()
   double baselineG = 0.0;
 
   if (!readLoadsAverageBlocking(r1G, r2G, baselineG)) {
-    Config.send_event("motor_calibration", "error", "baseline_failed");
+    Messaging.send_event("motor_calibration", "error", "baseline_failed");
     return false;
   }
 
@@ -1122,7 +1125,7 @@ bool runMotorCalibration()
     roughApproach = (long)maxPosition;
   }
 
-  Config.send_motor_calibration_plan(
+  Messaging.send_motor_calibration_plan(
     gapMm,
     estimatedContact > 0L ? (uint32_t)estimatedContact : 0UL,
     (uint32_t)roughApproach,
@@ -1132,7 +1135,7 @@ bool runMotorCalibration()
   bool contactDetected = false;
   uint32_t roughContactStep = 0UL;
 
-  Config.send_event_value(
+  Messaging.send_event_value(
     "motor_calibration",
     "rough_approach",
     "target_steps",
@@ -1144,7 +1147,7 @@ bool runMotorCalibration()
   // deteccion real de contacto se hace de a un paso por fuerza.
   if ((uint32_t)roughApproach > 0UL) {
     if (!moveAwayCalibrationBlocking((uint32_t)roughApproach)) {
-      Config.send_motor_calibration_error(
+      Messaging.send_motor_calibration_error(
         "max_position_reached",
         "rough_approach",
         (uint32_t)currentPositionSteps,
@@ -1180,7 +1183,7 @@ bool runMotorCalibration()
   }
 
   if (!contactDetected) {
-    Config.send_motor_calibration_progress(
+    Messaging.send_motor_calibration_progress(
       "fine_contact_search",
       0,
       estimatedContact > 0L ? (uint32_t)estimatedContact : 0UL,
@@ -1202,7 +1205,7 @@ bool runMotorCalibration()
     }
   }
 
-  Config.send_event_value(
+  Messaging.send_event_value(
     "motor_calibration",
     "rough_contact",
     "position_steps",
@@ -1211,7 +1214,7 @@ bool runMotorCalibration()
 
   // Volver a HOME para que las tres repeticiones empiecen desde la misma referencia.
   if (!runHomeBlocking()) {
-    Config.send_event("motor_calibration", "error", "home_after_rough_search_failed");
+    Messaging.send_event("motor_calibration", "error", "home_after_rough_search_failed");
     return false;
   }
 
@@ -1232,7 +1235,7 @@ bool runMotorCalibration()
     delay(MOTOR_CAL_SETTLE_MS);
 
     if (!readLoadsAverageBlocking(r1G, r2G, baselineG)) {
-      Config.send_event("motor_calibration", "error", "baseline_failed");
+      Messaging.send_event("motor_calibration", "error", "baseline_failed");
       return false;
     }
 
@@ -1242,7 +1245,7 @@ bool runMotorCalibration()
       ? contactReferenceStep - MOTOR_CAL_PRECONTACT_MARGIN_STEPS
       : 0UL;
 
-    Config.send_motor_calibration_progress(
+    Messaging.send_motor_calibration_progress(
       "fast_approach",
       cycle + 1,
       contactReferenceStep,
@@ -1269,7 +1272,7 @@ bool runMotorCalibration()
     }
 
     if (!contactDetected) {
-      Config.send_motor_calibration_progress(
+      Messaging.send_motor_calibration_progress(
         "fine_contact_search",
         cycle + 1,
         contactReferenceStep,
@@ -1306,7 +1309,7 @@ bool runMotorCalibration()
       return false;
     }
 
-    Config.send_motor_calibration_progress(
+    Messaging.send_motor_calibration_progress(
       "contact_detected",
       cycle + 1,
       contactReferenceStep,
@@ -1362,7 +1365,7 @@ bool runMotorCalibration()
       return false;
     }
 
-    Config.send_motor_calibration_cycle(
+    Messaging.send_motor_calibration_cycle(
       cycle + 1,
       cycles[cycle].baseline_g,
       cycles[cycle].contact_step,
@@ -1375,7 +1378,7 @@ bool runMotorCalibration()
     );
 
     // Cada ciclo termina descargando y reestableciendo HOME.
-    Config.send_motor_calibration_progress(
+    Messaging.send_motor_calibration_progress(
       "return_home",
       cycle + 1,
       contactReferenceStep,
@@ -1386,7 +1389,7 @@ bool runMotorCalibration()
     );
 
     if (!runHomeBlocking()) {
-      Config.send_event("motor_calibration", "error", "home_between_cycles_failed");
+      Messaging.send_event("motor_calibration", "error", "home_between_cycles_failed");
       return false;
     }
   }
@@ -1419,11 +1422,11 @@ bool runMotorCalibration()
         step500,
         step1000,
         step1500)) {
-    Config.send_event("motor_calibration", "error", "persist_failed");
+    Messaging.send_event("motor_calibration", "error", "persist_failed");
     return false;
   }
 
-  Config.send_motor_calibration_summary(
+  Messaging.send_motor_calibration_summary(
     "ok",
     maxForceG,
     contactOffset,
@@ -1467,7 +1470,7 @@ void homeAbort(const char* reason, bool disableDriver)
   st_loop = ST_READY;
   homed = false;
 
-  Config.send_event("home", "aborted", reason);
+  Messaging.send_event("home", "aborted", reason);
 }
 
 void homeError(const char* reason)
@@ -1478,7 +1481,7 @@ void homeError(const char* reason)
   st_loop = ST_READY;
   homed = false;
 
-  Config.send_event("home", "error", reason);
+  Messaging.send_event("home", "error", reason);
 }
 
 void homeOk()
@@ -1491,7 +1494,7 @@ void homeOk()
   currentPositionSteps = 0;
   homed = true;
 
-  Config.send_event_value("home", "ok", "reference_step", 0UL);
+  Messaging.send_event_value("home", "ok", "reference_step", 0UL);
 }
 
 void startHoming()
@@ -1504,15 +1507,15 @@ void startHoming()
   homeDebounceMs = Config.get_home_debounce_ms();
   homeSeekMaxSteps = Config.get_home_seek_max_steps();
 
-  Config.send_event("home", "start");
-  Config.send_event("home_direction", "toward_switch", DIR_HOME == HIGH ? "DIR=HIGH" : "DIR=LOW");
-  Config.send_event("home_direction", "away_from_switch", DIR_AWAY == HIGH ? "DIR=HIGH" : "DIR=LOW");
-  Config.send_event("home_initial_switch", HomeSwitch.stateText());
+  Messaging.send_event("home", "start");
+  Messaging.send_event("home_direction", "toward_switch", DIR_HOME == HIGH ? "DIR=HIGH" : "DIR=LOW");
+  Messaging.send_event("home_direction", "away_from_switch", DIR_AWAY == HIGH ? "DIR=HIGH" : "DIR=LOW");
+  Messaging.send_event("home_initial_switch", HomeSwitch.stateText());
 
   st_loop = ST_HOME;
 
   if (HomeSwitch.isActive()) {
-    Config.send_event("home", "release_start");
+    Messaging.send_event("home", "release_start");
     homeSetState(HOME_RELEASE);
 
     if (!startMotor(DIR_AWAY, homeStepPeriodUs)) {
@@ -1520,7 +1523,7 @@ void startHoming()
     }
   }
   else {
-    Config.send_event("home", "seek_fast_start");
+    Messaging.send_event("home", "seek_fast_start");
     homeSetState(HOME_SEEK_FAST);
 
     if (!startMotor(DIR_HOME, homeStepPeriodUs)) {
@@ -1545,7 +1548,7 @@ void processHoming()
         homeVerifyStartMs = millis();
         homeSetState(HOME_VERIFY_RELEASE);
 
-        Config.send_event_value(
+        Messaging.send_event_value(
           "home",
           "verify_release",
           "debounce_ms",
@@ -1559,7 +1562,7 @@ void processHoming()
 
     case HOME_VERIFY_RELEASE:
       if (!HomeSwitch.isFree(estadoHome)) {
-        Config.send_event("home", "release_bounce", "continue_release");
+        Messaging.send_event("home", "release_bounce", "continue_release");
         homeSetState(HOME_RELEASE);
 
         if (!startMotor(DIR_AWAY, homeStepPeriodUs)) {
@@ -1567,7 +1570,7 @@ void processHoming()
         }
       }
       else if ((millis() - homeVerifyStartMs) >= homeDebounceMs) {
-        Config.send_event_value(
+        Messaging.send_event_value(
           "home",
           "release_confirmed",
           "backoff_steps",
@@ -1586,7 +1589,7 @@ void processHoming()
       if (homePhaseSteps >= (long)homeBackoffSteps) {
         Motor.stop();
 
-        Config.send_event_value(
+        Messaging.send_event_value(
           "home",
           "seek_slow_start",
           "step_period_us",
@@ -1607,7 +1610,7 @@ void processHoming()
         homeVerifyStartMs = millis();
         homeSetState(HOME_VERIFY_FAST);
 
-        Config.send_event_value(
+        Messaging.send_event_value(
           "home",
           "verify_fast_contact",
           "debounce_ms",
@@ -1621,7 +1624,7 @@ void processHoming()
 
     case HOME_VERIFY_FAST:
       if (!HomeSwitch.isActive(estadoHome)) {
-        Config.send_event("home", "fast_contact_bounce", "continue_seek_fast");
+        Messaging.send_event("home", "fast_contact_bounce", "continue_seek_fast");
         homeSetState(HOME_SEEK_FAST);
 
         if (!startMotor(DIR_HOME, homeStepPeriodUs)) {
@@ -1629,7 +1632,7 @@ void processHoming()
         }
       }
       else if ((millis() - homeVerifyStartMs) >= homeDebounceMs) {
-        Config.send_event("home", "fast_contact_confirmed", "release_switch");
+        Messaging.send_event("home", "fast_contact_confirmed", "release_switch");
         homeSetState(HOME_RELEASE);
 
         if (!startMotor(DIR_AWAY, homeStepPeriodUs)) {
@@ -1644,7 +1647,7 @@ void processHoming()
         homeVerifyStartMs = millis();
         homeSetState(HOME_VERIFY_SLOW);
 
-        Config.send_event_value(
+        Messaging.send_event_value(
           "home",
           "verify_slow_contact",
           "debounce_ms",
@@ -1658,7 +1661,7 @@ void processHoming()
 
     case HOME_VERIFY_SLOW:
       if (!HomeSwitch.isActive(estadoHome)) {
-        Config.send_event("home", "slow_contact_bounce", "continue_seek_slow");
+        Messaging.send_event("home", "slow_contact_bounce", "continue_seek_slow");
         homeSetState(HOME_SEEK_SLOW);
 
         if (!startMotor(DIR_HOME, homeSlowPeriodUs)) {
@@ -1684,7 +1687,7 @@ void moveError(const char* reason, bool invalidateReference)
   Motor.stop();
   st_loop = ST_READY;
 
-  Config.send_event("move", "error", reason);
+  Messaging.send_event("move", "error", reason);
 
   if (invalidateReference) {
     invalidatePosition("home_required");
@@ -1696,7 +1699,7 @@ void moveOk()
   Motor.stop();
   st_loop = ST_READY;
 
-  Config.send_event_value(
+  Messaging.send_event_value(
     "move",
     "ok",
     "position_steps",
@@ -1709,7 +1712,7 @@ bool startAbsoluteMove(long targetSteps)
   moveTargetSteps = targetSteps;
 
   if (moveTargetSteps == currentPositionSteps) {
-    Config.send_event_value(
+    Messaging.send_event_value(
       "move",
       "ok",
       "position_steps",
@@ -1720,7 +1723,7 @@ bool startAbsoluteMove(long targetSteps)
 
   moveDirection = (moveTargetSteps > currentPositionSteps) ? DIR_AWAY : DIR_HOME;
 
-  Config.send_event_value(
+  Messaging.send_event_value(
     "move",
     "start",
     "target_steps",
@@ -1785,7 +1788,7 @@ void processHomeRawLog()
   }
 
   ultimoEstadoHome = estadoHome;
-  Config.send_event("fc_home_raw", HomeSwitch.stateText(estadoHome));
+  Messaging.send_event("fc_home_raw", HomeSwitch.stateText(estadoHome));
 }
 
 // ============================================================
@@ -1828,7 +1831,7 @@ void processPendingRequest()
       req != BEAM_REQ_STOP &&
       req != BEAM_REQ_DISABLE &&
       req != BEAM_REQ_READ_LOADS) {
-    Config.send_command_result(
+    Messaging.send_command_result(
       requestCmdName(req),
       "rejected",
       "operation_in_progress"
@@ -1845,7 +1848,7 @@ void processPendingRequest()
       else if (isMoveActive()) {
         Motor.stop();
         st_loop = ST_READY;
-        Config.send_event_value(
+        Messaging.send_event_value(
           "move",
           "aborted",
           "position_steps",
@@ -1857,12 +1860,12 @@ void processPendingRequest()
         st_loop = ST_READY;
       }
 
-      Config.send_command_result("stop", "accepted");
+      Messaging.send_command_result("stop", "accepted");
       break;
 
     case BEAM_REQ_ENABLE:
       Motor.enable();
-      Config.send_command_result("enable", "accepted");
+      Messaging.send_command_result("enable", "accepted");
       break;
 
     case BEAM_REQ_DISABLE:
@@ -1878,17 +1881,17 @@ void processPendingRequest()
         }
       }
 
-      Config.send_command_result("disable", "accepted");
+      Messaging.send_command_result("disable", "accepted");
       break;
 
     case BEAM_REQ_HOME:
       startHoming();
-      Config.send_command_result("home", "accepted");
+      Messaging.send_command_result("home", "accepted");
       break;
 
     case BEAM_REQ_MOVE_ABS_STEPS:
       if (!homed) {
-        Config.send_command_result(
+        Messaging.send_command_result(
           "move_abs_steps",
           "rejected",
           "home_required"
@@ -1897,7 +1900,7 @@ void processPendingRequest()
       }
 
       if (requestedSteps < 0) {
-        Config.send_command_result(
+        Messaging.send_command_result(
           "move_abs_steps",
           "rejected",
           "negative_target"
@@ -1906,7 +1909,7 @@ void processPendingRequest()
       }
 
       if (requestedSteps > 0 && Config.get_max_position_steps() == 0UL) {
-        Config.send_command_result(
+        Messaging.send_command_result(
           "move_abs_steps",
           "rejected",
           "max_position_not_configured"
@@ -1915,7 +1918,7 @@ void processPendingRequest()
       }
 
       if ((uint32_t)requestedSteps > Config.get_max_position_steps()) {
-        Config.send_command_result(
+        Messaging.send_command_result(
           "move_abs_steps",
           "rejected",
           "target_out_of_range"
@@ -1924,7 +1927,7 @@ void processPendingRequest()
       }
 
       if (!startAbsoluteMove(requestedSteps)) {
-        Config.send_command_result(
+        Messaging.send_command_result(
           "move_abs_steps",
           "rejected",
           "motor_start_failed"
@@ -1932,14 +1935,14 @@ void processPendingRequest()
         return;
       }
 
-      Config.send_command_result("move_abs_steps", "accepted");
+      Messaging.send_command_result("move_abs_steps", "accepted");
       break;
 
     case BEAM_REQ_READ_LOADS:
       processLoadCells();
 
       if (!LoadCell1.isCalibrated() || !LoadCell2.isCalibrated()) {
-        Config.send_command_result(
+        Messaging.send_command_result(
           "read_loads",
           "rejected",
           "load_cells_not_calibrated"
@@ -1948,7 +1951,7 @@ void processPendingRequest()
       }
 
       if (!sendCurrentLoads("manual")) {
-        Config.send_command_result(
+        Messaging.send_command_result(
           "read_loads",
           "rejected",
           "load_data_not_ready"
@@ -1956,12 +1959,12 @@ void processPendingRequest()
         return;
       }
 
-      Config.send_command_result("read_loads", "accepted");
+      Messaging.send_command_result("read_loads", "accepted");
       break;
 
     case BEAM_REQ_APPLY_FORCE:
       if (!LoadCell1.isCalibrated() || !LoadCell2.isCalibrated()) {
-        Config.send_command_result(
+        Messaging.send_command_result(
           "apply_force",
           "rejected",
           "load_cells_not_calibrated"
@@ -1970,7 +1973,7 @@ void processPendingRequest()
       }
 
       if (!Config.is_motor_calibrated()) {
-        Config.send_command_result(
+        Messaging.send_command_result(
           "apply_force",
           "rejected",
           "motor_not_calibrated"
@@ -1979,7 +1982,7 @@ void processPendingRequest()
       }
 
       if (!homed || currentPositionSteps != 0) {
-        Config.send_command_result(
+        Messaging.send_command_result(
           "apply_force",
           "rejected",
           "home_position_required"
@@ -1989,7 +1992,7 @@ void processPendingRequest()
 
       if (requestedForceG < MOTOR_APPLY_MIN_TARGET_G ||
           requestedForceG > MOTOR_APPLY_MAX_TARGET_G) {
-        Config.send_command_result(
+        Messaging.send_command_result(
           "apply_force",
           "rejected",
           "force_target_out_of_range"
@@ -1998,7 +2001,7 @@ void processPendingRequest()
       }
 
       if (requestedForceG >= Config.get_motor_max_force_g()) {
-        Config.send_command_result(
+        Messaging.send_command_result(
           "apply_force",
           "rejected",
           "force_target_exceeds_safety_limit"
@@ -2006,19 +2009,19 @@ void processPendingRequest()
         return;
       }
 
-      Config.send_command_result("apply_force", "accepted");
+      Messaging.send_command_result("apply_force", "accepted");
       runApplyForce(requestedForceG);
       break;
 
     case BEAM_REQ_MODE_MANUAL:
       st_mode = MODE_MANUAL;
-      Config.send_command_result("set_mode", "accepted");
-      Config.send_event("mode", "manual");
+      Messaging.send_command_result("set_mode", "accepted");
+      Messaging.send_event("mode", "manual");
       break;
 
     case BEAM_REQ_MODE_CALIBRATION_CELL:
       if (requestedCell != 1 && requestedCell != 2) {
-        Config.send_command_result("set_mode", "rejected", "invalid_cell");
+        Messaging.send_command_result("set_mode", "rejected", "invalid_cell");
         return;
       }
 
@@ -2039,8 +2042,8 @@ void processPendingRequest()
       calibrationCell = requestedCell;
       st_mode = MODE_CALIBRATION;
 
-      Config.send_command_result("set_mode", "accepted");
-      Config.send_event_value(
+      Messaging.send_command_result("set_mode", "accepted");
+      Messaging.send_event_value(
         "mode",
         "calibration",
         "cell",
@@ -2050,7 +2053,7 @@ void processPendingRequest()
 
     case BEAM_REQ_MODE_CALIBRATION_MOTOR:
       if (!LoadCell1.isCalibrated() || !LoadCell2.isCalibrated()) {
-        Config.send_command_result(
+        Messaging.send_command_result(
           "set_mode",
           "rejected",
           "load_cells_not_calibrated"
@@ -2059,7 +2062,7 @@ void processPendingRequest()
       }
 
       if (Config.get_max_position_steps() == 0UL) {
-        Config.send_command_result(
+        Messaging.send_command_result(
           "set_mode",
           "rejected",
           "max_position_not_configured"
@@ -2073,13 +2076,13 @@ void processPendingRequest()
       calibrationCell = 0;
       st_mode = MODE_CALIBRATION;
 
-      Config.send_command_result("set_mode", "accepted");
-      Config.send_event("mode", "calibration", "motor");
+      Messaging.send_command_result("set_mode", "accepted");
+      Messaging.send_event("mode", "calibration", "motor");
       break;
 
     case BEAM_REQ_MODE_EXPERIMENT:
       // Reservado para la proxima etapa: motor + fuerza + secuencia.
-      Config.send_command_result("set_mode", "rejected", "not_implemented");
+      Messaging.send_command_result("set_mode", "rejected", "not_implemented");
       break;
 
     case BEAM_REQ_FACTORY_RESET:
@@ -2091,8 +2094,8 @@ void processPendingRequest()
       LoadCell1.clearCalibration();
       LoadCell2.clearCalibration();
 
-      Config.send_command_result("factory_reset", "accepted");
-      Config.send_event("position", "invalid", "home_required");
+      Messaging.send_command_result("factory_reset", "accepted");
+      Messaging.send_event("position", "invalid", "home_required");
       break;
 
     default:
@@ -2159,7 +2162,7 @@ void processCalibrationMode()
 
   if (calibrationMode == CAL_LOAD_CELL) {
     if (calibrationCell == 1) {
-      Config.send_event("calibration", "start", "cell1");
+      Messaging.send_event("calibration", "start", "cell1");
 
       ok = LoadCell1.calibrate();
 
@@ -2171,7 +2174,7 @@ void processCalibrationMode()
       }
     }
     else if (calibrationCell == 2) {
-      Config.send_event("calibration", "start", "cell2");
+      Messaging.send_event("calibration", "start", "cell2");
 
       ok = LoadCell2.calibrate();
 
@@ -2184,14 +2187,14 @@ void processCalibrationMode()
     }
 
     if (ok) {
-      Config.send_event(
+      Messaging.send_event(
         "calibration",
         "ok",
         calibrationCell == 1 ? "cell1" : "cell2"
       );
     }
     else {
-      Config.send_event(
+      Messaging.send_event(
         "calibration",
         "error",
         calibrationCell == 1 ? "cell1" :
@@ -2200,17 +2203,17 @@ void processCalibrationMode()
     }
   }
   else if (calibrationMode == CAL_MOTOR) {
-    Config.send_event("calibration", "start", "motor");
+    Messaging.send_event("calibration", "start", "motor");
     ok = runMotorCalibration();
 
-    Config.send_event(
+    Messaging.send_event(
       "calibration",
       ok ? "ok" : "error",
       "motor"
     );
   }
   else {
-    Config.send_event("calibration", "error", "invalid_calibration_mode");
+    Messaging.send_event("calibration", "error", "invalid_calibration_mode");
   }
 
   calibrationMode = CAL_NONE;
@@ -2218,16 +2221,16 @@ void processCalibrationMode()
   st_mode = MODE_MANUAL;
   lastLoadStreamMs = millis();
 
-  Config.send_event("mode", "manual", "calibration_finished");
+  Messaging.send_event("mode", "manual", "calibration_finished");
 }
 
 void processExperimentMode()
 {
   // Seguridad: este modo existe arquitectonicamente pero todavia no se usa.
   Motor.stop();
-  Config.send_event("experiment", "error", "not_implemented");
+  Messaging.send_event("experiment", "error", "not_implemented");
   st_mode = MODE_MANUAL;
-  Config.send_event("mode", "manual", "experiment_not_implemented");
+  Messaging.send_event("mode", "manual", "experiment_not_implemented");
 }
 
 // ============================================================
@@ -2262,7 +2265,7 @@ void processInitialization()
       }
       else {
         Motor.disable();
-        Config.send_event("boot", "error", "config_init_failed");
+        Messaging.send_event("boot", "error", "config_init_failed");
         st_loop = ST_INIT_ERROR;
       }
       break;
@@ -2286,24 +2289,24 @@ void processInitialization()
         Config.is_cell2_calibrated()
       );
 
-      Config.send_event(
+      Messaging.send_event(
         "load_cell_1",
         LoadCell1.isReady() ? "ready" : "not_ready",
         LoadCell1.isCalibrated() ? "calibrated" : "not_calibrated"
       );
 
-      Config.send_event(
+      Messaging.send_event(
         "load_cell_2",
         LoadCell2.isReady() ? "ready" : "not_ready",
         LoadCell2.isCalibrated() ? "calibrated" : "not_calibrated"
       );
 
-      Config.send_event("boot", "ready", FW_VERSION);
-      Config.send_event("fc_home_initial", HomeSwitch.stateText(ultimoEstadoHome));
-      Config.send_event("direction", "home", DIR_HOME == HIGH ? "DIR=HIGH" : "DIR=LOW");
-      Config.send_event("direction", "away", DIR_AWAY == HIGH ? "DIR=HIGH" : "DIR=LOW");
-      Config.send_event("position", "invalid", "home_required");
-      Config.send_event("mode", "manual");
+      Messaging.send_event("boot", "ready", FW_VERSION);
+      Messaging.send_event("fc_home_initial", HomeSwitch.stateText(ultimoEstadoHome));
+      Messaging.send_event("direction", "home", DIR_HOME == HIGH ? "DIR=HIGH" : "DIR=LOW");
+      Messaging.send_event("direction", "away", DIR_AWAY == HIGH ? "DIR=HIGH" : "DIR=LOW");
+      Messaging.send_event("position", "invalid", "home_required");
+      Messaging.send_event("mode", "manual");
 
       st_loop = ST_READY;
       break;
@@ -2361,8 +2364,8 @@ void loop()
       Motor.disable();
       st_mode = MODE_MANUAL;
       st_loop = ST_READY;
-      Config.send_event("mode", "error", "invalid_mode");
-      Config.send_event("mode", "manual");
+      Messaging.send_event("mode", "error", "invalid_mode");
+      Messaging.send_event("mode", "manual");
       break;
   }
 }

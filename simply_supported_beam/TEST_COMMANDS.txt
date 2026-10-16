@@ -1,4 +1,13 @@
-simply_supported_beam 0.09 - comandos JSON
+simply_supported_beam 0.10 - comandos JSON
+
+CAMBIO ARQUITECTONICO 0.10
+-------------------------
+- El contrato JSON no cambia.
+- La salida de respuestas/eventos se centraliza en CBeamMessaging.
+- UART/Serial sigue siendo el transporte actual.
+- CBeamConfig conserva parser de entrada + NVS + pedidos runtime.
+- Los textos interactivos de calibracion siguen por Serial en esta etapa.
+
 ==========================================
 
 MODO MANUAL
