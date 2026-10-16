@@ -1,30 +1,266 @@
-simply_supported_beam 0.04 - comandos JSON
+simply_supported_beam 0.09 - comandos JSON
 ==========================================
 
-Runtime:
+MODO MANUAL
+===========
+
+Runtime motor:
 {"cmd":"home"}
 {"cmd":"move_abs_steps","steps":100}
 {"cmd":"stop"}
 {"cmd":"enable"}
 {"cmd":"disable"}
 
-Info:
+Lectura puntual de las dos reacciones:
+{"cmd":"read_loads"}
+
+Respuesta de cargas esperada:
+{"event":"loads","source":"manual","r1_g":250.1,"r2_g":249.8,"sum_g":499.9,"r1_n":2.452,"r2_n":2.450,"sum_n":4.902}
+
+Streaming de cargas (runtime, NO persistente):
+{"load_stream":true}
+{"load_stream":true,"load_stream_period_ms":500}
+{"load_stream":false}
+
+El streaming puede permanecer activo mientras se mueve el motor en MODE_MANUAL.
+
+Aplicar una fuerza objetivo usando la calibracion motor-viga:
+{"cmd":"apply_force","force_g":500}
+{"cmd":"apply_force","force_g":750}
+{"cmd":"apply_force","force_g":1000}
+{"cmd":"apply_force","force_g":1500}
+
+Requisitos de apply_force:
+- ambas celdas calibradas;
+- calibracion motor-viga valida;
+- HOME valido y posicion actual = 0;
+- force_g entre 50 y 1500 g;
+- force_g menor que motor_max_force_g.
+
+apply_force NO salta directamente cerca del paso guardado del objetivo.
+La secuencia es:
+
+  HOME = 0
+  -> medir baseline
+  -> aproximacion rapida hasta 5 pasos antes de motor_contact_offset_steps
+  -> busqueda fina de contacto de a 1 paso
+  -> contacto confirmado por fuerza
+  -> avance por realimentacion hasta force_g
+
+Los pasos guardados de 500/1000/1500 g se usan solo para calcular
+estimated_step informativo. No gobiernan la aproximacion inicial.
+
+La detencion final se hace siempre por la fuerza medida:
+
+  fuerza_aplicada = (R1 + R2) - baseline
+
+El motor queda detenido en la posicion alcanzada. Para descargar:
+{"cmd":"move_abs_steps","steps":0}
+
+Eventos esperados:
+- force_control / start
+- force_control / fast_approach
+- force_control / fine_contact_search
+- force_control / contact_detected
+- force_control / target_search
+- force_control / target_reached
+
+Los limites max_position_steps y motor_max_force_g permanecen activos.
+
+
+MODO CALIBRACION - CELDAS
+=========================
+
+Celda 1 = apoyo fijo:
+{"cmd":"set_mode","mode":"calibration","cell":1}
+
+Celda 2 = apoyo movil:
+{"cmd":"set_mode","mode":"calibration","cell":2}
+
+Luego se conserva la mecanica interactiva ya validada:
+
+0 g     -> esperar estabilizacion -> escribir: ok
+500 g   -> esperar estabilizacion -> escribir: ok
+1000 g  -> esperar estabilizacion -> escribir: ok
+1500 g  -> esperar estabilizacion -> escribir: ok
+
+Cada punto se mide durante 20 s.
+La clase CLoadCell calcula:
+
+  Peso[g] = a * RAW + b
+
+y el .ino solicita a CBeamConfig persistir a/b en NVS.
+
+Al finalizar vuelve automaticamente a MODE_MANUAL.
+Recalibrar una celda invalida la calibracion motor-viga anterior.
+
+
+MODO CALIBRACION - MOTOR/VIGA
+=============================
+
+Entrar:
+{"cmd":"set_mode","mode":"calibration","calibration":"motor"}
+
+Requisitos:
+- ambas celdas deben estar calibradas;
+- max_position_steps debe estar configurado;
+- viga colocada y sin carga externa;
+- debe existir luz entre aplicador y viga en HOME.
+
+Luego el firmware pide por texto:
+
+1) luz aproximada aplicador-viga [mm]
+   ejemplo actual: 2.1
+
+2) fuerza MAXIMA de seguridad para esa probeta [g]
+   debe ser mayor a 1500 g
+   ejemplo actual: 1800
+
+3) confirmacion:
+   ok
+
+Secuencia automatica:
+
+HOME
+-> baseline R1+R2 con viga sin carga externa
+-> convertir la luz estimada a pasos
+-> aproximacion rapida hasta 5 pasos antes del contacto estimado
+-> busqueda fina de contacto de a 1 paso por fuerza
+-> HOME
+-> 3 repeticiones completas:
+     aproximacion rapida usando el ULTIMO contacto medido como referencia
+     buscar contacto fino
+     informar contacto real
+     buscar 500 g e informar inicio/alcance
+     buscar 1000 g e informar inicio/alcance
+     buscar 1500 g e informar inicio/alcance
+     informar resumen de pasos y fuerzas reales
+     informar retorno a HOME
+     HOME
+-> calcular valores medios y rangos de repetibilidad
+-> guardar en NVS
+
+El contacto se considera inicialmente cuando:
+
+  (R1 + R2) - baseline >= 20 g
+
+La fuerza maxima ingresada es un limite de seguridad durante toda
+la calibracion. Si se alcanza, el motor se detiene y la calibracion aborta.
+
+Si aborta por max_position_steps o max_force_g, el JSON informa tambien:
+- phase
+- position_steps
+- force_g
+- target_g (cuando corresponde)
+- max_force_g
+
+Valores persistidos al finalizar correctamente:
+- motor_max_force_g
+- motor_contact_offset_steps   <- offset medio desde HOME al contacto
+- motor_step_500_g
+- motor_step_1000_g
+- motor_step_1500_g
+- motor_calibrated
+
+Los pasos guardados son valores aproximados para acelerar la aproximacion
+futura. La fuerza medida por las celdas sigue siendo la variable que manda.
+
+Durante la calibracion se emiten eventos JSON de progreso con estados como:
+- plan
+- fast_approach
+- fine_contact_search
+- contact_detected
+- target_search
+- target_reached
+- return_home
+
+La primera aproximacion usa gap_mm solamente como estimacion.
+Las repeticiones siguientes usan el ultimo contacto REAL detectado.
+
+
+MODO EXPERIMENTO
+================
+
+Reservado para la siguiente etapa.
+Por ahora:
+{"cmd":"set_mode","mode":"experiment"}
+
+responde rejected / not_implemented.
+
+
+INFO
+====
+
 {"info":"version"}
 {"info":"all_params"}
 
-Parametros persistentes:
+all_params incluye, entre otros:
+- schema
+- cell1_a
+- cell1_b
+- cell1_calibrated
+- cell2_a
+- cell2_b
+- cell2_calibrated
+- motor_max_force_g
+- motor_contact_offset_steps
+- motor_step_500_g
+- motor_step_1000_g
+- motor_step_1500_g
+- motor_calibrated
+- load_stream
+- load_stream_period_ms
+
+
+PARAMETROS PERSISTENTES MOTOR
+=============================
+
 {"step_period_us":5000}
 {"home_slow_period_us":10000}
 {"home_backoff_steps":20}
 {"home_debounce_ms":15}
 {"home_seek_max_steps":2500}
 {"move_fast_period_us":5000}
-{"max_position_steps":450}
+{"max_position_steps":150}
 
-Factory reset:
+
+FACTORY RESET
+=============
+
 {"cmd":"factory_reset"}
 
-Notas:
+Factory reset borra:
+- calibraciones de ambas celdas;
+- calibracion motor-viga;
+- offset de contacto;
+- limite maximo de fuerza aprendido en la calibracion.
+
+
+PINOUT HX711
+============
+
+Celda 1 = apoyo fijo:
+DT  -> GPIO5
+SCK -> GPIO6
+
+Celda 2 = apoyo movil:
+DT  -> GPIO7
+SCK -> GPIO8
+
+Ambos HX711:
+VCC -> 3.3 V
+GND -> GND
+
+Celda -> HX711 validado:
+Rojo   -> E+
+Negro  -> E-
+Verde  -> A+
+Blanco -> A-
+
+
+NOTAS MOTOR
+===========
+
 - DIR_HOME = LOW
 - DIR_AWAY = HIGH
 - HOME = subir
@@ -33,44 +269,21 @@ Notas:
 - FC_HOME LOW = LIBRE
 - FC_HOME HIGH = ACTIVADO
 
-- Ya NO existen:
-  {"cmd":"jog_home"}
-  {"cmd":"jog_away"}
-
-- Todo movimiento de ensayo es absoluto respecto de HOME:
+- Todo movimiento manual es absoluto respecto de HOME:
   {"cmd":"move_abs_steps","steps":N}
 
 - HOME establece:
   position_steps = 0
 
-- No se permite mover sin haber realizado HOME.
-
+- No se permite mover sin HOME valido.
 - No se permiten posiciones negativas.
 
 - Rango permitido:
   0 <= steps <= max_position_steps
 
-- Despues de reset del ESP32 se pierde la referencia logica
-  y hay que realizar HOME nuevamente.
-
-- STOP durante HOME aborta inmediatamente.
-
-- STOP durante MOVE aborta y conserva la posicion alcanzada.
-
-- DISABLE invalida la referencia de posicion porque el mecanismo
-  podria desplazarse con el driver deshabilitado.
-
-- home_seek_max_steps esta almacenado en NVS.
-
-- max_position_steps esta almacenado en NVS.
-
-- move_fast_period_us esta almacenado en NVS.
-
-- Relacion mecanica provisional validada:
+- Relacion mecanica provisional usada para la aproximacion de calibracion:
   200 pasos = 1 vuelta ~= 8 mm
   25 pasos ~= 1 mm
 
-- Los delayMicroseconds() cortos del driver se mantienen
-  intencionalmente:
-    10 us despues de DIR
-    4 us para STEP HIGH
+- La luz ingresada en mm solo aproxima la zona de contacto.
+  El contacto real se determina por las celdas.
