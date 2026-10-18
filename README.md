@@ -400,6 +400,14 @@ The following have already been physically validated:
 
 [![Simply Supported Beam – Mechanism Repeatability](docs/images/repetibilidad_mecanismo.png)](https://youtu.be/4bZ4d4fbTGo)
 
+### Load Cells — Part 1
+
+[![Proyecto de investigación y desarrollo: Simply Supported Beam - Celdas de carga - Part1](docs/images/load-cells-part1.png)](https://youtu.be/zhj3ex9ILCk)
+
+### Load Cells — Part 2
+
+[![Proyecto de investigación y desarrollo: Simply Supported Beam - Celdas de carga - Part2](docs/images/load-cells-part2.png)](https://youtu.be/lvqovGOvsIk)
+
 ## Documentation
 
 The current project documentation is stored in the [`docs/`](docs/) directory.
