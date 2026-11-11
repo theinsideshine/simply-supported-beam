@@ -4,7 +4,33 @@ Research and development of a **digital simply supported beam test bench** for c
 
 The project is being developed in stages so that each subsystem can be validated independently before adding the next layer of complexity.
 
-## Current Development Branch: `motor-repeatability`
+## Current status — November 2026 (firmware 0.10; research document v3.00)
+
+The project has advanced beyond the initial `motor-repeatability` stage. The **ESP32-S3, stepper actuator, HOME reference and two calibrated load cells** are integrated. A first nine-run, three-point bending campaign used target loads of **500, 1000 and 1500 g** (three runs each); beam deflection was observed using a **CITIZEN C-107 mechanical dial gauge** at **150 mm from the left support**, while the actuator applied load at midspan.
+
+**Preliminary experimental conclusions:** measured-versus-model deflection deviations were approximately **+8.9%, +7.0% and +3.4%** for the three load levels, assuming **E = 69 GPa** and the working geometry. The force–deflection curve gives an **equivalent bending modulus of about 65.8 GPa**, but **its combined measurement uncertainty is not yet determined**. Dial readings were estimated from photographs, and E = 69 GPa is an assumed reference rather than a certified reference specimen. These are **preliminary results, not a formal metrological calibration**.
+
+### Research documents and experimental reports
+
+- **[Research project — v3.00 (11 Nov 2026)](docs/simply_supported_beam_v3.00.pdf)** — updated main research document, retaining the complete v2.02 theory and questions, with the first nine-run campaign and preliminary responses to both research questions.
+- [Research progress summary (11 Nov 2026)](docs/simply_supported_beam_informe_avance_2026-11-11.pdf) — concise report on the current stage and open uncertainty question.
+- [Experimental Report 1 — first campaign (5 Nov 2026)](docs/informe_01_validacion_preliminar_viga.pdf) — measurements, graphs, photos and preliminary comparison with Euler–Bernoulli.
+- [Mechanical dial indicator — first measurements](docs/comparador_mecanico_primeras_respuestas.pdf) — initial handling and metrological observations.
+- [Mechanical and load-cell calibration criteria](docs/criterios_mecanicos_y_calibracion_celdas_viga.pdf) — working reference for mechanics and load-cell calibration.
+
+**Research traceability:** this repository preserves the **project's evolution and initial documentation** as well as the **preliminary findings to date**. Consult the [`docs/`](docs/) folder and the [videos](#project-presentations) below for the complete development and test history.
+
+### Current next step
+
+Evaluate a digital dial indicator's actual data interface and voltage levels before connecting it to the ESP32-S3; acquire synchronized deflection and load samples, characterize measurement noise, and quantify repeatability and uncertainty.
+
+---
+
+## Historical stage — `motor-repeatability`
+
+*The following section documents the earlier motor-only development stage. Its scope statements are historical and do not describe the current firmware 0.10 capabilities.*
+
+### Original branch notes: `motor-repeatability`
 
 The purpose of this branch is to validate the **mechanical motion system and its repeatability** before integrating electronic force measurement.
 
@@ -12,7 +38,7 @@ At this stage, force is measured externally with a **scale**.
 
 The main experimental objective is to command the same absolute motor position repeatedly and verify whether approximately the same force/weight reading is obtained each time.
 
-## Current Stage Objectives
+## Historical stage objectives
 
 This branch focuses on validating:
 
@@ -365,7 +391,7 @@ same measured load
 
 This will be used to evaluate the repeatability of the complete mechanical chain before adding load cells.
 
-## Current Validation Status
+## Mechanical-stage validation status
 
 The following have already been physically validated:
 
@@ -416,7 +442,8 @@ The current project documentation is stored in the [`docs/`](docs/) directory.
 * [Project Development — v1.02](docs/simply_supported_beam_develop_v1.02.pdf)
 * [Project Guidelines — v2.02](docs/simply_supported_beam_guidelines_v2.02.pdf)
 * [Electrical Schematic — v1.00](docs/simply_supported_beam_sch_v1.00.pdf)
-* [Project Document — v2.02](docs/simply_supported_beam_v2.02.pdf)
+* **[Project Document — v3.00 (current)](docs/simply_supported_beam_v3.00.pdf)**
+* [Project Document — v2.02 (original, June 2026)](docs/simply_supported_beam_v2.02.pdf)
 
 > Keep these filenames unchanged when copying the PDF files into `docs/`, so the links above remain valid.
 
@@ -472,7 +499,7 @@ The version number shown at boot is used to:
 * identify exactly which firmware is running;
 * make it possible to resume development confidently after working on other projects.
 
-## Next Stages
+## Next stages originally planned (historical)
 
 After mechanical repeatability has been validated with the external scale:
 
